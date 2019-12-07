@@ -1,5 +1,5 @@
 """
-The omniglot dataset consists 20 hand drawn examples from each of 1623 characters 
+The omniglot dataset consists 20 hand drawn examples from each of 1623 characters
 from alphabets around the world. The original image size is 105x105.
 
 The omniglot dataset is preprocessed to 28x28 and split into 1200 training characters
@@ -11,6 +11,7 @@ train.npy and validate.npy.
 import random
 import numpy as np
 import tensorflow as tf
+from utils import returnUVMImages
 
 IMAGE_HEIGHT = 28
 IMAGE_WIDTH = 28
@@ -90,47 +91,77 @@ def get_episode(use_validation_set, params):
   """
   if len(_data) == 0:
     _data.update(np.load(DATA_FILE_PATH))
-    
+
   dataset_images = _data["validate"] if use_validation_set else _data["train"]
   num_classes, examples_per_class, _, _ = dataset_images.shape
 
   # choose classes
   classes = random.sample(range(num_classes), params.classes_per_episode)
-  
-  # choose labels
+
+  # choose labels, this is where one shot algo makes a difference (could the labels be right or wrong???)
   class_labels = random.sample(range(params.classes_per_episode), params.classes_per_episode)
-  
+
   # choose rotation for each class
   class_rotation = np.random.choice(range(4), params.classes_per_episode)
 
+  ####THIS AREA IS WHERE CHANGES MUST BE MADE!!!
+  if not use_validation_set:
+    selec = np.random.randint(0, 2)
+    if selec == 1:
+        indices = list(zip(*returnUVMImages(classes, dataset_images)))
+        labels = list(map(classes.index, indices[0]))
+        images_raw = dataset_images[indices[0], indices[1], :, :]
+    else:
+        samples_per_class = random.sample(list(range(params.classes_per_episode)) * examples_per_class,
+                                          params.time_steps)  # e.g. [0,1,1,0,2,0,0,1]
+        indices = [random.sample(range(examples_per_class), samples_per_class.count(i)) for i in
+                   range(params.classes_per_episode)]  # e.g. [[18,5,10,3], [17,9,12], [19]]
+        labels = [[class_labels[c]] * len(cs) for c, cs in enumerate(indices)]  # e.g. [ [2,2,2,2], [0,0,0], [1] ]
+        labels = [item for sublist in labels for item in sublist]  # e.g. [2,2,2,2,0,0,0,1]
+
+        indices = [zip([classes[c]] * len(cs), cs) for c, cs in enumerate(
+            indices)]  # e.g. [ [[128,18], [128,5], [128,10], [128,3]], [[55,17],[55,9],[55,12]], [[91,19]] ]
+        indices = [item for sublist in indices for item in
+                   sublist]  # e.g. [ [128,18], [128,5], [128,10], [128,3], [55,17], [55,9], [55,12], [91,19] ]
+
+        shuffled_order = random.sample(range(params.time_steps), params.time_steps)  # e.g. [7, 3, 2, 4, 5, 1, 6, 0]
+        labels = [labels[i] for i in shuffled_order]  # e.g. [1, 2, 2, 0, 0, 2, 0, 2]
+        indices = [indices[i] for i in
+                   shuffled_order]  # e.g. [ [91,19], [128,3], [128,10], [55,17], [55,9], [128,5], [55,12], [128,18] ]
+
+        indices = list(zip(*indices))  # e.g. [ [91, 128, 128, 55, 55, 128, 55, 128], [19, 3, 10, 17, 9, 5, 12, 18] ]
+        images_raw = dataset_images[indices[0], indices[1], :, :]  # (time_steps, raw_image_height, raw_image_width)
+  ###############################################
   # choose images
   # NOTE: this is slower than it could be, too much sampling I think
-  samples_per_class = random.sample(list(range(params.classes_per_episode))*examples_per_class, params.time_steps) # e.g. [0,1,1,0,2,0,0,1]
-  indices = [random.sample(range(examples_per_class), samples_per_class.count(i)) for i in range(params.classes_per_episode)] # e.g. [[18,5,10,3], [17,9,12], [19]]
-  labels = [[class_labels[c]]*len(cs) for c, cs in enumerate(indices)] # e.g. [ [2,2,2,2], [0,0,0], [1] ]
-  labels = [item for sublist in labels for item in sublist] # e.g. [2,2,2,2,0,0,0,1]
+  #time steps is the the 30, # of time steps per episode, get 30 samples
+  else:
+    samples_per_class = random.sample(list(range(params.classes_per_episode))*examples_per_class, params.time_steps) # e.g. [0,1,1,0,2,0,0,1]
+    indices = [random.sample(range(examples_per_class), samples_per_class.count(i)) for i in range(params.classes_per_episode)] # e.g. [[18,5,10,3], [17,9,12], [19]]
+    labels = [[class_labels[c]]*len(cs) for c, cs in enumerate(indices)] # e.g. [ [2,2,2,2], [0,0,0], [1] ]
+    labels = [item for sublist in labels for item in sublist] # e.g. [2,2,2,2,0,0,0,1]
 
-  indices = [zip([classes[c]]*len(cs), cs) for c, cs in enumerate(indices)] # e.g. [ [[128,18], [128,5], [128,10], [128,3]], [[55,17],[55,9],[55,12]], [[91,19]] ]
-  indices = [item for sublist in indices for item in sublist] # e.g. [ [128,18], [128,5], [128,10], [128,3], [55,17], [55,9], [55,12], [91,19] ]
+    indices = [zip([classes[c]]*len(cs), cs) for c, cs in enumerate(indices)] # e.g. [ [[128,18], [128,5], [128,10], [128,3]], [[55,17],[55,9],[55,12]], [[91,19]] ]
+    indices = [item for sublist in indices for item in sublist] # e.g. [ [128,18], [128,5], [128,10], [128,3], [55,17], [55,9], [55,12], [91,19] ]
 
-  shuffled_order = random.sample(range(params.time_steps), params.time_steps) # e.g. [7, 3, 2, 4, 5, 1, 6, 0]
-  labels = [labels[i] for i in shuffled_order] # e.g. [1, 2, 2, 0, 0, 2, 0, 2]
-  indices = [indices[i] for i in shuffled_order] # e.g. [ [91,19], [128,3], [128,10], [55,17], [55,9], [128,5], [55,12], [128,18] ]
+    shuffled_order = random.sample(range(params.time_steps), params.time_steps) # e.g. [7, 3, 2, 4, 5, 1, 6, 0]
+    labels = [labels[i] for i in shuffled_order] # e.g. [1, 2, 2, 0, 0, 2, 0, 2]
+    indices = [indices[i] for i in shuffled_order] # e.g. [ [91,19], [128,3], [128,10], [55,17], [55,9], [128,5], [55,12], [128,18] ]
 
-  indices = list(zip(*indices)) # e.g. [ [91, 128, 128, 55, 55, 128, 55, 128], [19, 3, 10, 17, 9, 5, 12, 18] ]
-  images_raw = dataset_images[indices[0], indices[1], :, :] # (time_steps, raw_image_height, raw_image_width)
+    indices = list(zip(*indices)) # e.g. [ [91, 128, 128, 55, 55, 128, 55, 128], [19, 3, 10, 17, 9, 5, 12, 18] ]
+    images_raw = dataset_images[indices[0], indices[1], :, :] # (time_steps, raw_image_height, raw_image_width)
 
   # augment images
   images = np.zeros([params.time_steps, IMAGE_HEIGHT, IMAGE_WIDTH], dtype=np.float32)
   for i in range(params.time_steps):
     im = images_raw[i]
-    
+
     # class rotation (0, pi/2, pi, 3*pi/2)
     im = np.rot90(im, k=class_rotation[labels[i]])
 
     # # mild rotation (-pi/16, pi/16), TOO SLOW, maybe do this in tensorflow
     # im = scipy.misc.imrotate(im, np.random.random()*(np.pi/8.0)-(np.pi/16.0))
-    
+
     # # translate (+/- 10 pixels), TOO SLOW, maybe do this in tensorflow
     # im = np.pad(im, 10, 'constant', constant_values=0.0)
     # offset = np.random.randint(20, size=2)
@@ -154,7 +185,7 @@ def get_episode(use_validation_set, params):
 if __name__ == "__main__":
   import argparse
   import PIL
-  
+
   parser = argparse.ArgumentParser()
   parser.add_argument("--batch_size", type=int, default=50, help="The number of episodes used in one gradient descent step.")
   parser.add_argument("--batches_per_eval", type=int, default=20, help="The number of batches to run for each evaluation.")
@@ -186,7 +217,7 @@ if __name__ == "__main__":
   print("All tests passed")
 
   raise SystemExit # comment this if you want to continue and view frames from an episode
-  
+
   # view one random episode from a batch
   images_t, labels_t = input_fn(eval=False, use_validation_set=True, params=params)
   with tf.Session() as sess:
@@ -196,7 +227,7 @@ if __name__ == "__main__":
 
     batch_size, time_steps, height, width = images.shape
     i_b = random.randrange(batch_size)
-    
+
     for t in range(time_steps):
       im = images[i_b, t, :, :]
       im = (im*255.0).astype(np.uint8)
